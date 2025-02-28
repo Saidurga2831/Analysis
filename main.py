@@ -1,146 +1,121 @@
-# app.py
 import streamlit as st
 import pandas as pd
+import numpy as np
+import scipy.stats as stats
+from sklearn.metrics import cohen_kappa_score
 import matplotlib.pyplot as plt
 import seaborn as sns
-import numpy as np
-from io import BytesIO
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import letter
-from docx import Document
 
-# Function to load data from CSV file
-def load_data(uploaded_file):
-    return pd.read_csv(uploaded_file)
+# Function to perform analysis and generate plots
+def analyze_data(ai_data, radiologist_data):
+    # Extracting relevant columns for comparison
+    ai_accuracy = ai_data['accuracy']
+    radiologist_accuracy = radiologist_data['accuracy']
+    ai_quality = ai_data['quality']
+    radiologist_quality = radiologist_data['quality']
+    ai_consistency = ai_data['consistency']
+    radiologist_consistency = radiologist_data['consistency']
+    ai_classification = ai_data['classification']
+    radiologist_classification = radiologist_data['classification']
+    
+    # Perform t-tests
+    t_stat_accuracy, p_value_accuracy = stats.ttest_ind(ai_accuracy, radiologist_accuracy)
+    t_stat_quality, p_value_quality = stats.ttest_ind(ai_quality, radiologist_quality)
+    t_stat_consistency, p_value_consistency = stats.ttest_ind(ai_consistency, radiologist_consistency)
 
-# Function to plot distribution and return figure
-def plot_distribution(df):
-    numeric_cols = df.select_dtypes(include=[np.number]).columns
-    fig, axes = plt.subplots(len(numeric_cols), 1, figsize=(8, len(numeric_cols) * 4))
-    if len(numeric_cols) == 1:
-        axes = [axes]  # Ensure axes is iterable
-    for i, col in enumerate(numeric_cols):
-        sns.histplot(df[col], kde=True, ax=axes[i])
-        axes[i].set_title(f'Distribution Plot for {col}')
-        axes[i].set_xlabel(col)
-        axes[i].set_ylabel('Frequency')
+    # Compute Cohen's Kappa for inter-rater reliability
+    kappa = cohen_kappa_score(ai_classification, radiologist_classification)
+
+    # Create combined plots
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    
+    # Plot Accuracy Comparison
+    sns.barplot(x=['AI', 'Radiologist'], y=[ai_accuracy.mean(), radiologist_accuracy.mean()], ax=axes[0, 0])
+    axes[0, 0].set_title('Accuracy Comparison')
+    axes[0, 0].set_ylabel('Mean Accuracy')
+
+    # Plot Quality Comparison
+    sns.barplot(x=['AI', 'Radiologist'], y=[ai_quality.mean(), radiologist_quality.mean()], ax=axes[0, 1])
+    axes[0, 1].set_title('Quality Comparison')
+    axes[0, 1].set_ylabel('Mean Quality')
+
+    # Plot Consistency Comparison
+    sns.barplot(x=['AI', 'Radiologist'], y=[ai_consistency.mean(), radiologist_consistency.mean()], ax=axes[1, 0])
+    axes[1, 0].set_title('Consistency Comparison')
+    axes[1, 0].set_ylabel('Mean Consistency')
+
+    # Plot Cohen's Kappa
+    sns.heatmap([[kappa]], annot=True, cmap="Blues", fmt=".2f", xticklabels=["Agreement"], yticklabels=["AI vs Radiologist"], ax=axes[1, 1])
+    axes[1, 1].set_title("Cohen's Kappa Agreement")
+
+    # Adjust layout
     plt.tight_layout()
-    return fig
 
-# Function to plot scatter and return figure
-def plot_scatter(df):
-    numeric_cols = df.select_dtypes(include=[np.number]).columns
-    fig, ax = plt.subplots(figsize=(10, 6))
-    sns.pairplot(df[numeric_cols])
-    plt.suptitle('Scatter Plots for All Numeric Columns', y=1.02)
-    return fig
+    # Save the figure to a file
+    report_file = "report.png"
+    fig.savefig(report_file)
 
-# Function to plot box plot and return figure
-def plot_box(df):
-    numeric_cols = df.select_dtypes(include=[np.number]).columns
-    fig, axes = plt.subplots(len(numeric_cols), 1, figsize=(8, len(numeric_cols) * 4))
-    if len(numeric_cols) == 1:
-        axes = [axes]  # Ensure axes is iterable
-    for i, col in enumerate(numeric_cols):
-        sns.boxplot(x=df[col], ax=axes[i])
-        axes[i].set_title(f'Box Plot for {col}')
-    plt.tight_layout()
-    return fig
+    # Create a summary of the results
+    analysis_results = {
+        't_stat_accuracy': t_stat_accuracy,
+        'p_value_accuracy': p_value_accuracy,
+        't_stat_quality': t_stat_quality,
+        'p_value_quality': p_value_quality,
+        't_stat_consistency': t_stat_consistency,
+        'p_value_consistency': p_value_consistency,
+        'kappa': kappa
+    }
 
-# Function to plot relationship plot and return figure
-def plot_relationship(df):
-    fig = plt.figure(figsize=(8, 6))
-    sns.pairplot(df)
-    plt.suptitle('Relationship Plots between Numeric Columns', y=1.02)
-    return fig
+    # Create a DataFrame for results to be downloaded
+    results_df = pd.DataFrame([analysis_results])
 
-# Function to plot comparison plot and return figure
-def plot_comparison(df):
-    fig = plt.figure(figsize=(8, 6))
-    sns.pairplot(df, kind='reg')
-    plt.suptitle('Comparison Plot of Numeric Columns', y=1.02)
-    return fig
+    return results_df, report_file
 
-# Function to save plots to PDF
-def save_plots_to_pdf(figures):
-    buffer = BytesIO()
-    c = canvas.Canvas(buffer, pagesize=letter)
-    for fig in figures:
-        fig.savefig(buffer, format="png")
-        c.drawImage(buffer, 0, 0, width=500, height=400)  # Adjust image placement
-        c.showPage()
-    c.save()
-    buffer.seek(0)
-    return buffer
-
-# Function to save plots to Word Document
-def save_plots_to_word(figures):
-    doc = Document()
-    for fig in figures:
-        img_path = 'temp_plot.png'
-        fig.savefig(img_path)
-        doc.add_paragraph(f"Plot:")
-        doc.add_picture(img_path)
-        doc.add_paragraph("\n")
-    doc.save("plots.docx")
-
-# Streamlit app
+# Streamlit UI
 def main():
-    st.title('CSV Data Visualizer')
+    st.title("AI vs Radiologist Report Quality Comparison")
 
-    uploaded_file = st.file_uploader("Upload your CSV file", type=["csv"])
-    if uploaded_file is not None:
-        # Load and display the dataframe
-        df = load_data(uploaded_file)
-        st.write(df.head())
+    # File upload
+    uploaded_ai_file = st.file_uploader("Upload AI Reports CSV", type=["csv"])
+    uploaded_radiologist_file = st.file_uploader("Upload Radiologist Reports CSV", type=["csv"])
 
-        # Generate and display plots
-        figures = []
+    if uploaded_ai_file and uploaded_radiologist_file:
+        # Load the CSV files into DataFrames
+        ai_data = pd.read_csv(uploaded_ai_file)
+        radiologist_data = pd.read_csv(uploaded_radiologist_file)
 
-        if st.checkbox('Generate Distribution Plots'):
-            fig = plot_distribution(df)
-            st.pyplot(fig)
-            figures.append(fig)
+        # Check if the columns match between the two datasets
+        if ai_data.shape != radiologist_data.shape:
+            st.error("The data shape does not match between AI and Radiologist reports.")
+        else:
+            st.write("Data successfully loaded!")
 
-        if st.checkbox('Generate Scatter Plots'):
-            fig = plot_scatter(df)
-            st.pyplot(fig)
-            figures.append(fig)
+            # Perform the analysis
+            results_df, report_file = analyze_data(ai_data, radiologist_data)
 
-        if st.checkbox('Generate Box Plots'):
-            fig = plot_box(df)
-            st.pyplot(fig)
-            figures.append(fig)
+            # Display analysis results
+            st.subheader("Statistical Analysis Results:")
+            st.write(results_df)
 
-        if st.checkbox('Generate Relationship Plots'):
-            fig = plot_relationship(df)
-            st.pyplot(fig)
-            figures.append(fig)
-
-        if st.checkbox('Generate Comparison Plots'):
-            fig = plot_comparison(df)
-            st.pyplot(fig)
-            figures.append(fig)
-
-        # Provide options to download plots as PDF or Word Document
-        if st.button('Download as PDF'):
-            pdf_buffer = save_plots_to_pdf(figures)
+            # Provide the option to download the CSV report
             st.download_button(
-                label="Download PDF",
-                data=pdf_buffer,
-                file_name="plots.pdf",
-                mime="application/pdf"
+                label="Download CSV Report",
+                data=results_df.to_csv(index=False),
+                file_name="report_analysis.csv",
+                mime="text/csv"
             )
 
-        if st.button('Download as Word Document'):
-            save_plots_to_word(figures)
-            with open("plots.docx", "rb") as file:
-                st.download_button(
-                    label="Download Word Document",
-                    data=file,
-                    file_name="plots.docx",
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                )
+            # Provide the option to download the plot report
+            st.download_button(
+                label="Download Plot Report",
+                data=open(report_file, "rb").read(),
+                file_name="report_plots.png",
+                mime="image/png"
+            )
+
+            # Display the plot on the web interface
+            st.subheader("Analysis Plots:")
+            st.image(report_file)
 
 if __name__ == "__main__":
     main()
